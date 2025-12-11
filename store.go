@@ -23,3 +23,9 @@ func (kv *KVStore) Get(key string) (string, bool) {
 	val, ok := kv.mp[key]
 	return val, ok
 }
+
+func (kv *KVStore) Delete(key string) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	delete(kv.mp, key)
+}

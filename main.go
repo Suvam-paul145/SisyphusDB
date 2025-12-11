@@ -12,8 +12,9 @@ func main() {
 
 	server := NewServer()
 
-	mux.HandleFunc("/put", server.handlePut)
-	mux.HandleFunc("/get", server.handleGet)
+	mux.HandleFunc("PUT /put", server.handlePut)
+	mux.HandleFunc("GET /get", server.handleGet)
+	mux.HandleFunc("DELETE /delete", server.handleDelete)
 
 	fmt.Println("Server is running on port: ", PORT)
 
