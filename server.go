@@ -1,16 +1,22 @@
 package main
 
 import (
+	"KV-Store/kv"
+	"KV-Store/wal"
 	"fmt"
 	"net/http"
 )
 
 type Server struct {
-	store *KVStore
+	store *kv.Store
 }
 
 func NewServer() *Server {
-	return &Server{store: NewKVStore()}
+	newStore, err := kv.NewKVStore("database.log")
+	if err != nil {
+		panic(err)
+	}
+	return &Server{store: newStore}
 }
 
 func (s *Server) handlePut(w http.ResponseWriter, r *http.Request) {
@@ -21,7 +27,15 @@ func (s *Server) handlePut(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing key/val", http.StatusBadRequest)
 		return
 	}
+	// Store in table
 	s.store.Put(key, val)
+
+	// Write in logs
+	er := s.store.Wal.Write(key, val, wal.CmdPut)
+	if er != nil {
+		fmt.Println("Error writing log: ", er)
+	}
+
 	_, err := fmt.Fprintf(w, "Success Put: %s in %s", key, val)
 	fmt.Printf("put %s in %s\n", key, val) // server log
 	if err != nil {
@@ -53,7 +67,14 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	if key == "" {
 		http.Error(w, "No key found", http.StatusBadRequest)
 	}
+	// Delete from table
 	s.store.Delete(key)
+	// Write in logs
+	er := s.store.Wal.Write(key, "", wal.CmdDelete)
+	if er != nil {
+		fmt.Println("Error writing log: ", er)
+	}
+
 	fmt.Printf("Delete %s\n", key)
 	_, err := fmt.Fprintf(w, "Success Delete: %s", key)
 	if err != nil {

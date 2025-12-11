@@ -18,8 +18,8 @@ type WAL struct {
 type Command byte
 
 const (
-	CmdPut   Command = 1
-	CmDelete Command = 2
+	CmdPut    Command = 1
+	CmdDelete Command = 2
 )
 
 const headerSize = 29
@@ -65,7 +65,7 @@ func (w *WAL) Write(key string, val string, cmd Command) error {
 	if _, err := w.file.Write(buf); err != nil {
 		return err
 	}
-	return w.file.Sync()
+	return w.file.Sync() // Do not sync for every entry for larger applications
 }
 
 func (w *WAL) Recover() ([]Entry, error) {
@@ -77,7 +77,7 @@ func (w *WAL) Recover() ([]Entry, error) {
 	header := make([]byte, headerSize)
 
 	for {
-		_, err := w.file.ReadFull(w.file, header)
+		_, err := io.ReadFull(w.file, header)
 		if err == io.EOF {
 			break
 		}
@@ -121,7 +121,30 @@ func (w *WAL) Recover() ([]Entry, error) {
 			Value:     data[keySize:],
 		})
 
-		w.currentLSN = lsn + uint64(keySize) + uint64(valSize)
+		w.currentLSN = lsn + headerSize + uint64(keySize) + uint64(valSize)
 	}
 	return entries, nil
+}
+
+func OpenWAL(filename string) (*WAL, []Entry, error) {
+	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	w := &WAL{
+		file:       file,
+		currentLSN: 0,
+	}
+
+	entries, err := w.Recover()
+
+	if err != nil {
+		err := file.Close()
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, nil, err
+	}
+	return w, entries, nil
 }
