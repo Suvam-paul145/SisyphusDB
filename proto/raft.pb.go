@@ -229,6 +229,8 @@ type AppendEntriesResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Term          int32                  `protobuf:"varint,1,opt,name=term,proto3" json:"term,omitempty"`
 	Success       bool                   `protobuf:"varint,2,opt,name=success,proto3" json:"success,omitempty"`
+	ConflictIndex int32                  `protobuf:"varint,3,opt,name=conflictIndex,proto3" json:"conflictIndex,omitempty"`
+	ConflictTerm  int32                  `protobuf:"varint,4,opt,name=conflictTerm,proto3" json:"conflictTerm,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -275,6 +277,20 @@ func (x *AppendEntriesResponse) GetSuccess() bool {
 		return x.Success
 	}
 	return false
+}
+
+func (x *AppendEntriesResponse) GetConflictIndex() int32 {
+	if x != nil {
+		return x.ConflictIndex
+	}
+	return 0
+}
+
+func (x *AppendEntriesResponse) GetConflictTerm() int32 {
+	if x != nil {
+		return x.ConflictTerm
+	}
+	return 0
 }
 
 type LogEntry struct {
@@ -356,10 +372,12 @@ const file_proto_raft_proto_rawDesc = "" +
 	"\fprevLogIndex\x18\x03 \x01(\x05R\fprevLogIndex\x12 \n" +
 	"\vprevLogTerm\x18\x04 \x01(\x05R\vprevLogTerm\x12)\n" +
 	"\aentries\x18\x05 \x03(\v2\x0f.proto.LogEntryR\aentries\x12\"\n" +
-	"\fleaderCommit\x18\x06 \x01(\x05R\fleaderCommit\"E\n" +
+	"\fleaderCommit\x18\x06 \x01(\x05R\fleaderCommit\"\x8f\x01\n" +
 	"\x15AppendEntriesResponse\x12\x12\n" +
 	"\x04term\x18\x01 \x01(\x05R\x04term\x12\x18\n" +
-	"\asuccess\x18\x02 \x01(\bR\asuccess\"N\n" +
+	"\asuccess\x18\x02 \x01(\bR\asuccess\x12$\n" +
+	"\rconflictIndex\x18\x03 \x01(\x05R\rconflictIndex\x12\"\n" +
+	"\fconflictTerm\x18\x04 \x01(\x05R\fconflictTerm\"N\n" +
 	"\bLogEntry\x12\x12\n" +
 	"\x04term\x18\x01 \x01(\x05R\x04term\x12\x14\n" +
 	"\x05index\x18\x02 \x01(\x05R\x05index\x12\x18\n" +

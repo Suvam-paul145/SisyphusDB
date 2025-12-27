@@ -3,7 +3,6 @@ package raft
 import (
 	pb "KV-Store/proto"
 	"context"
-	"fmt"
 	"time"
 )
 
@@ -17,25 +16,24 @@ type AppendEntriesArgs struct {
 }
 
 type AppendEntriesReply struct {
-	Term    int
-	Success bool
+	Term          int
+	Success       bool
+	ConflictIndex int
+	ConflictTerm  int
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	if len(args.Entries) > 0 || args.LeaderCommit > rf.commitIndex {
-		fmt.Printf("[Follower %d] Recv HB. LeaderCommit: %d, MyCommit: %d, Entries: %d\n",
-			rf.me, args.LeaderCommit, rf.commitIndex, len(args.Entries))
-	}
-	//reject older leaders
+
+	// Term Check
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.Success = false
 		return
 	}
 
-	// We heard from a valid leader
+	// Heartbeat & State Management
 	rf.currentTerm = args.Term
 	rf.state = Follower
 	rf.votedFor = -1
@@ -44,38 +42,63 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.persist()
 	reply.Term = rf.currentTerm
 
-	LastLogIndex := len(rf.log) - 1
-	if args.PrevLogIndex > LastLogIndex || rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+	// Log Consistency Check
+	lastLogIndex := len(rf.log) - 1
+
+	// Case A: Follower log is shorter than Leader's PrevLogIndex
+	if args.PrevLogIndex > lastLogIndex {
 		reply.Success = false
+		reply.ConflictTerm = -1
+		reply.ConflictIndex = len(rf.log)
 		return
 	}
 
-	// conflict resolution & append for entries
+	// Case B: Term mismatch at PrevLogIndex
+	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+		reply.Success = false
+		reply.ConflictTerm = rf.log[args.PrevLogIndex].Term
+
+		// Find the VERY FIRST index of this conflicting term (scan backwards)
+		// This allows jumping over an entire term of bad data
+		for i := args.PrevLogIndex; i >= 0; i-- {
+			if rf.log[i].Term == reply.ConflictTerm {
+				reply.ConflictIndex = i
+			} else {
+				break
+			}
+		}
+		return
+	}
+
+	//  Append Entries (Safe Merge)
 	insertIndex := args.PrevLogIndex + 1
 	for i, entry := range args.Entries {
 		index := insertIndex + i
 		if index < len(rf.log) {
-			if rf.log[index].Term != args.Term {
+			// If we find a conflict, truncate the rest and start fresh
+			if rf.log[index].Term != entry.Term {
 				rf.log = rf.log[:index]
 				rf.log = append(rf.log, entry)
-				rf.persist()
 			}
 		} else {
+			// No conflict, just append
 			rf.log = append(rf.log, entry)
-			rf.persist()
 		}
 	}
-	//update commit index taking the minimum of leader's commit index and the actual committed data in server
+
+	// Persist if we changed anything
+	if len(args.Entries) > 0 {
+		rf.persist()
+	}
+
+	// Update Commit Index
 	if args.LeaderCommit > rf.commitIndex {
+		// min(LeaderCommit, Index of last new entry)
 		lastNewIndex := args.PrevLogIndex + len(args.Entries)
-		oldCommit := rf.commitIndex
 		if args.LeaderCommit < lastNewIndex {
 			rf.commitIndex = args.LeaderCommit
 		} else {
 			rf.commitIndex = lastNewIndex
-		}
-		if rf.commitIndex > oldCommit {
-			fmt.Printf("[Follower %d] Updated CommitIndex: %d -> %d\n", rf.me, oldCommit, rf.commitIndex)
 		}
 	}
 
@@ -98,6 +121,10 @@ func (rf *Raft) sendHeartBeats() {
 
 		go func(server int) {
 			rf.mu.Lock()
+			if rf.state != Leader {
+				rf.mu.Unlock()
+				return
+			}
 
 			prevLogIndex := rf.nextIndex[server] - 1
 			if prevLogIndex < 0 {
@@ -105,19 +132,31 @@ func (rf *Raft) sendHeartBeats() {
 			}
 
 			entries := make([]LogEntry, 0)
+			lastIdx := len(rf.log)
+			nextIdx := rf.nextIndex[server]
 
-			if len(rf.log)-1 >= rf.nextIndex[server] {
-				entries = append(entries, rf.log[rf.nextIndex[server]:]...)
+			// Prevent OOM by sending max 100 entries at a time
+			if lastIdx > nextIdx {
+				endIdx := nextIdx + 100
+				if endIdx > lastIdx {
+					endIdx = lastIdx
+				}
+				entries = append(entries, rf.log[nextIdx:endIdx]...)
 			}
 
 			args := AppendEntriesArgs{
 				Term:         term,
 				LeaderId:     rf.me,
 				PrevLogIndex: prevLogIndex,
-				PrevLogTerm:  rf.log[prevLogIndex].Term,
+				// Guard against empty log access
+				PrevLogTerm:  0,
 				Entries:      entries,
 				LeaderCommit: rf.commitIndex,
 			}
+			if prevLogIndex < len(rf.log) {
+				args.PrevLogTerm = rf.log[prevLogIndex].Term
+			}
+
 			rf.mu.Unlock()
 
 			var reply AppendEntriesReply
@@ -132,37 +171,63 @@ func (rf *Raft) sendHeartBeats() {
 					rf.leaderId = -1
 					return
 				}
+
 				if reply.Success {
-					// Update tracking state
+					// Success: Advance indices
 					newMatchIndex := args.PrevLogIndex + len(args.Entries)
 					if newMatchIndex > rf.matchIndex[server] {
 						rf.matchIndex[server] = newMatchIndex
 						rf.nextIndex[server] = rf.matchIndex[server] + 1
 					}
-					//update commit index
+
+					// Check if we can commit
 					for N := len(rf.log) - 1; N > rf.commitIndex; N-- {
-						count := 1 // Count self
-						for i := range rf.peers {
-							if i != rf.me && rf.matchIndex[i] >= N {
+						count := 1
+						for peer := range rf.peers {
+							if peer != rf.me && rf.matchIndex[peer] >= N {
 								count++
 							}
 						}
 						if count > len(rf.peers)/2 && rf.log[N].Term == rf.currentTerm {
 							rf.commitIndex = N
-							fmt.Printf("[Commit] Leader %d committed Index %d\n", rf.me, N)
-							break // Found the highest committed index
+							// Notify Apply Channel here if needed
+							break
 						}
 					}
 				} else {
-					// Failure: Follower's log is inconsistent.
-					// Backtrack: Decrement nextIndex and retry later
-					rf.nextIndex[server]--
+					// SMART BACKTRACKING ---
+
+					if reply.ConflictTerm == -1 {
+						// Follower log is shorter than ours. Jump to their end.
+						rf.nextIndex[server] = reply.ConflictIndex
+					} else {
+						// Search for ConflictTerm in our log
+						lastIndexOfTerm := -1
+						for i := len(rf.log) - 1; i >= 0; i-- {
+							if rf.log[i].Term == reply.ConflictTerm {
+								lastIndexOfTerm = i
+								break
+							}
+						}
+
+						if lastIndexOfTerm != -1 {
+							// We have that term! Start just after it.
+							rf.nextIndex[server] = lastIndexOfTerm + 1
+						} else {
+							// We don't have that term. Skip it entirely.
+							rf.nextIndex[server] = reply.ConflictIndex
+						}
+					}
+
+					// Sanity check
+					if rf.nextIndex[server] < 1 {
+						rf.nextIndex[server] = 1
+					}
 				}
 			}
 		}(i)
 	}
 }
-
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
 	// 1. Convert to Proto
 	pbEntries := make([]*pb.LogEntry, len(args.Entries))
@@ -184,7 +249,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	}
 
 	// 2. Call gRPC
-	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*100)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*500)
 	defer cancel()
 
 	pbReply, err := rf.peers[server].AppendEntries(ctx, pbArgs)

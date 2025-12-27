@@ -19,6 +19,7 @@ message RequestVoteRequest {
 message RequestVoteResponse {
   int32 term = 1;
   bool voteGranted = 2;
+
 }
 
 message AppendEntriesRequest {
@@ -33,6 +34,8 @@ message AppendEntriesRequest {
 message AppendEntriesResponse {
   int32 term = 1;
   bool success = 2;
+  int32 conflictIndex = 3;
+  int32 conflictTerm = 4;
 }
 
 message LogEntry {
