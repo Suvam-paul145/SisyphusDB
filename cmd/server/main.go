@@ -19,7 +19,7 @@ const PORT = ":8080"
 
 func main() {
 	id := flag.Int("id", 0, "ID of KV store")
-	peerAddrs := flag.String("peers", "", "Comma separated list of peer addresses")
+	peerAdds := flag.String("peers", "", "Comma separated list of peer addresses")
 	rpcPort := flag.String("port", "5001", "gRPC port for Raft communication")
 	httpPort := flag.String("http", "8001", "HTTP port for Client communication")
 	// Take template url during production as parameter for request forwarding
@@ -27,7 +27,7 @@ func main() {
 	template := "http://localhost:%d"
 	flag.Parse()
 
-	peerList := strings.Split(*peerAddrs, ",")
+	peerList := strings.Split(*peerAdds, ",")
 	var raftClients []pb.RaftServiceClient
 
 	for _, addr := range peerList {
