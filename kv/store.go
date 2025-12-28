@@ -20,19 +20,19 @@ import (
 type MemTable struct {
 	Index map[string]int
 	Arena *arena.Arena
-	size  uint32
+	Size  uint32
 	Wal   *wal.WAL
 }
 
 type Store struct {
-	activeMap *MemTable
+	ActiveMap *MemTable
 	frozenMap *MemTable
 	ssTables  []*sstable.Reader
-	walDir    string
-	sstDir    string
+	WalDir    string
+	SstDir    string
 	walSeq    int64
-	flushChan chan struct{} // FrozenMem -> Active Mem
-	me        int           // same as raft.me, for prometheus metrics
+	FlushChan chan struct{} // FrozenMem -> Active Mem
+	Me        int           // same as raft.me, for prometheus metrics
 	// Raft Channels
 	Raft         *raft.Raft
 	notifyChans  map[int]chan OpResult // return client -> success
@@ -59,13 +59,13 @@ func NewKVStore(peers []pb.RaftServiceClient, me int) (*Store, error) {
 	entries, _ := currentWal.Recover()
 	applyCh := make(chan raft.LogEntry)
 	store := &Store{
-		activeMap: NewMemTable(mapLimit, currentWal),
+		ActiveMap: NewMemTable(mapLimit, currentWal),
 		frozenMap: nil,
-		walDir:    walDir,
-		sstDir:    sstDir,
-		flushChan: make(chan struct{}, 1),
+		WalDir:    walDir,
+		SstDir:    sstDir,
+		FlushChan: make(chan struct{}, 1),
 		applyCh:   applyCh,
-		me:        me,
+		Me:        me,
 	}
 	store.cond = sync.NewCond(&store.mu)
 	for _, entry := range entries {
@@ -76,18 +76,18 @@ func NewKVStore(peers []pb.RaftServiceClient, me int) (*Store, error) {
 		var err error
 		switch entry.Cmd {
 		case wal.CmdPut:
-			offset, err = store.activeMap.Arena.Put(k, v, false)
+			offset, err = store.ActiveMap.Arena.Put(k, v, false)
 			if err != nil {
 				return nil, err
 			}
 		case wal.CmdDelete:
-			offset, err = store.activeMap.Arena.Put(k, v, true) //handles tombstone
+			offset, err = store.ActiveMap.Arena.Put(k, v, true) //handles tombstone
 			if err != nil {
 				return nil, err
 			}
 		}
-		store.activeMap.Index[k] = offset
-		store.activeMap.size += uint32(len(k) + len(v))
+		store.ActiveMap.Index[k] = offset
+		store.ActiveMap.Size += uint32(len(k) + len(v))
 	}
 	store.refreshSSTables()
 	store.Raft = raft.Make(peers, me, applyCh)
@@ -134,7 +134,7 @@ func (s *Store) applyInternal(key string, val string, isDelete bool) error {
 	defer s.mu.Unlock()
 	//  size: Header(1) + KeyLen(2) + ValLen(4) + Key + Val
 	entrySize := 1 + 2 + 4 + len(key) + len(val)
-	if int(s.activeMap.size)+entrySize > mapLimit {
+	if int(s.ActiveMap.Size)+entrySize > mapLimit {
 		if s.frozenMap != nil {
 			return errors.New("write stall: memTable flushing")
 		}
@@ -142,22 +142,25 @@ func (s *Store) applyInternal(key string, val string, isDelete bool) error {
 	}
 
 	// Write in logs
-	var er error
-	if isDelete {
-		er = s.activeMap.Wal.Write(key, val, wal.CmdDelete)
-	} else {
-		er = s.activeMap.Wal.Write(key, val, wal.CmdPut)
+	/*
+		var er error
+		if isDelete {
+			er = s.activeMap.Wal.Write(key, val, wal.CmdDelete)
+		} else {
+			er = s.activeMap.Wal.Write(key, val, wal.CmdPut)
 
-	}
-	if er != nil {
-		fmt.Println("Error writing log: ", er)
-	}
-	offset, err := s.activeMap.Arena.Put(key, val, isDelete)
+		}
+		if er != nil {
+			fmt.Println("Error writing log: ", er)
+		}
+
+	*/
+	offset, err := s.ActiveMap.Arena.Put(key, val, isDelete)
 	if err != nil {
 		return errors.New("failed to put key " + key + ":" + err.Error())
 	}
-	s.activeMap.Index[key] = offset
-	s.activeMap.size += uint32(entrySize)
+	s.ActiveMap.Index[key] = offset
+	s.ActiveMap.Size += uint32(entrySize)
 	return nil
 }
 
@@ -197,7 +200,7 @@ func (s *Store) Put(key string, val string, isDelete bool) error {
 func (s *Store) Get(key string) (string, bool) {
 	s.mu.RLock()
 	// 1. Check active table
-	if val, isTomb, found := checkTable(s.activeMap, key); found {
+	if val, isTomb, found := checkTable(s.ActiveMap, key); found {
 		s.mu.RUnlock()
 		if isTomb {
 			return "", false
@@ -215,7 +218,7 @@ func (s *Store) Get(key string) (string, bool) {
 	s.mu.RUnlock() // Unlock BEFORE Disk IO to avoid blocking writes!
 
 	// 3. Check SSTables (Disk)
-	files, _ := os.ReadDir(s.sstDir)
+	files, _ := os.ReadDir(s.SstDir)
 	var sstFiles []string
 	for _, f := range files {
 		if strings.HasSuffix(f.Name(), ".sst") {
@@ -227,7 +230,7 @@ func (s *Store) Get(key string) (string, bool) {
 
 	for _, file := range sstFiles {
 		// Open the reader
-		fullPath := filepath.Join(s.sstDir, file)
+		fullPath := filepath.Join(s.SstDir, file)
 		reader, err := sstable.OpenSSTable(fullPath)
 		if err != nil {
 			continue // Skip bad files

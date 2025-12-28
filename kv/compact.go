@@ -14,7 +14,7 @@ import (
 const maxLevelFiles = 4 //Pyramid width
 
 func (s *Store) getFilesForLevel(level int) []string {
-	files, _ := os.ReadDir(s.sstDir)
+	files, _ := os.ReadDir(s.SstDir)
 	var matchedFiles []string
 
 	prefix := fmt.Sprintf("L%d_", level)
@@ -53,7 +53,7 @@ func (s *Store) CheckAndCompact(level int) error {
 	s.mu.Unlock()
 	var iterators []*sstable.SSTableIterator
 	for _, filename := range filesToCompact {
-		it, err := sstable.NewIterator(filepath.Join(s.sstDir, filename))
+		it, err := sstable.NewIterator(filepath.Join(s.SstDir, filename))
 		if err != nil {
 			// If error, cleanup opened ones
 			for _, openIt := range iterators {
@@ -66,7 +66,7 @@ func (s *Store) CheckAndCompact(level int) error {
 		}
 	}
 	// create output builder (Level + 1)
-	newFilename := fmt.Sprintf("%s/L%d_%d.sst", s.sstDir, nextLevel, time.Now().UnixNano())
+	newFilename := fmt.Sprintf("%s/L%d_%d.sst", s.SstDir, nextLevel, time.Now().UnixNano())
 	builder, err := sstable.NewBuilder(newFilename, 10000)
 	if err != nil {
 		return err
@@ -126,7 +126,7 @@ func (s *Store) CheckAndCompact(level int) error {
 	defer s.mu.Unlock()
 
 	for _, f := range filesToCompact {
-		_ = os.Remove(filepath.Join(s.sstDir, f))
+		_ = os.Remove(filepath.Join(s.SstDir, f))
 	}
 	s.refreshSSTables()
 	go func() {
@@ -142,11 +142,11 @@ func (s *Store) refreshSSTables() {
 	}
 
 	// Scan all levels
-	files, _ := os.ReadDir(s.sstDir)
+	files, _ := os.ReadDir(s.SstDir)
 	var sstFiles []string
 	for _, f := range files {
 		if strings.HasSuffix(f.Name(), ".sst") {
-			sstFiles = append(sstFiles, filepath.Join(s.sstDir, f.Name()))
+			sstFiles = append(sstFiles, filepath.Join(s.SstDir, f.Name()))
 		}
 	}
 
@@ -167,7 +167,7 @@ func (s *Store) refreshSSTables() {
 }
 
 func (s *Store) reportLevelMetrics() {
-	files, _ := os.ReadDir(s.sstDir)
+	files, _ := os.ReadDir(s.SstDir)
 
 	levelCounts := make(map[int]float64)
 	levelSizes := make(map[int]float64)
@@ -182,7 +182,7 @@ func (s *Store) reportLevelMetrics() {
 		}
 	}
 
-	idStr := fmt.Sprintf("%d", s.me)
+	idStr := fmt.Sprintf("%d", s.Me)
 
 	for lvl, count := range levelCounts {
 		lvlStr := fmt.Sprintf("%d", lvl)
