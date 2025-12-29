@@ -8,11 +8,12 @@ services:
   kv-0:
     build: .
     container_name: kv-0
+    restart: on-failure
     command: >
       -id=0 
       -http=8001 
       -port=5001 
-      -peers=kv-1:5001,kv-2:5001  
+      -peers=kv-0:5001,kv-1:5001,kv-2:5001  
       -peer-template="http://kv-%d:8001"
     ports:
       - "8001:8001"
@@ -24,11 +25,12 @@ services:
   kv-1:
       build: .
       container_name: kv-1
+      restart: on-failure
       command: >
         -id=1 
         -http=8001                 
         -port=5001                  
-        -peers=kv-0:5001,kv-2:5001  
+        -peers=kv-0:5001,kv-1:5001,kv-2:5001  
         -peer-template="http://kv-%d:8001"
       ports:
         - "8002:8001"
@@ -40,11 +42,12 @@ services:
   kv-2:
       build: .
       container_name: kv-2
+      restart: on-failure
       command: >
         -id=2 
         -http=8001                 
         -port=5001                
-        -peers=kv-0:5001,kv-1:5001
+        -peers=kv-0:5001,kv-1:5001,kv-2:5001  
         -peer-template="http://kv-%d:8001"
       ports:
         - "8003:8001"

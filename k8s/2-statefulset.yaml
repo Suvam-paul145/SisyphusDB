@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kv
+spec:
+  serviceName: "kv-raft"
+  replicas: 3
+  selector:
+    matchLabels:
+      app: SisyphusDB
+  template:
+    metadata:
+      labels:
+        app: SisyphusDB
+    spec:
+      containers:
+        - name: kv-server
+          image: sisyphusdb:v2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5001
+              name: raft
+            - containerPort: 8001
+              name: client
+          command: ["/bin/sh", "-c"]
+          args:
+            - >
+              export ID=${HOSTNAME##*-};
+              echo "Starting Node $ID...";
+              ./kv-server 
+              -id $ID 
+              -port 5001 
+              -http 8001 
+              -peers kv-0.kv-raft:5001,kv-1.kv-raft:5001,kv-2.kv-raft:5001 
+              -peer-template "http://kv-%d.kv-raft:8001"
+
+          volumeMounts:
+            - name: wal-storage
+              mountPath: /root/Storage/wal
+            - name: data-storage
+              mountPath: /root/Storage/data
+
+  volumeClaimTemplates:
+  - metadata:
+                name: wal-storage
+    spec:
+                accessModes: [ "ReadWriteOnce" ]
+                resources:
+                  requests:
+                    storage: 100Mi
+  - metadata:
+                name: data-storage
+    spec:
+                accessModes: [ "ReadWriteOnce" ]
+                resources:
+                  requests:
+                    storage: 100Mi
