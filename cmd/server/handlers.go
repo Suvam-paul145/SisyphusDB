@@ -47,3 +47,35 @@ func handlePut(store *kv.Store, nodeID int, peerTemplate string) http.HandlerFun
 		w.Write([]byte("Success"))
 	}
 }
+
+func handleDelete(store *kv.Store, nodeID int, peerTemplate string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		key := r.URL.Query().Get("key")
+
+		if key == "" {
+			http.Error(w, "key is required", http.StatusBadRequest)
+			return
+		}
+		err := store.Put(key, "", true)
+		if err != nil {
+			if err.Error() == "not leader" {
+				leaderID := store.Raft.GetLeader()
+				if leaderID == -1 {
+					http.Error(w, "Leader not found", http.StatusNotFound)
+					return
+				}
+				if leaderID == nodeID {
+					http.Error(w, "Cluster in leadership transition", http.StatusServiceUnavailable)
+					return
+				}
+				leaderURL := fmt.Sprintf(peerTemplate, leaderID)
+				targetURL := fmt.Sprintf("%s/delete?key=%s", leaderURL, key)
+				forwardToLeader(w, r, targetURL)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}

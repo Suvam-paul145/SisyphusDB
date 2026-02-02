@@ -51,6 +51,7 @@ func main() {
 	// Register HTTP handlers
 	http.HandleFunc("/get", withMetrics(handleGet(store), "GET", "/get"))
 	http.HandleFunc("/put", withMetrics(handlePut(store, *id, *peerTemplate), "PUT", "/put"))
+	http.HandleFunc("/delete", withMetrics(handleDelete(store, *id, *peerTemplate), "DELETE", "/delete"))
 	http.Handle("/metrics", promhttp.Handler())
 
 	fmt.Printf("HTTP server listening on :%s\n", *httpPort)

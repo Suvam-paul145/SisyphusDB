@@ -13,7 +13,7 @@ COPY . .
 
 # Build the binary.
 # CGO_ENABLED=0 creates a static binary (no external C library dependencies)
-RUN CGO_ENABLED=0 GOOS=linux go build -o kv-server cmd/server/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -o kv-server ./cmd/server
 
 # --- Stage 2: Runner ---
 # Use a tiny Alpine Linux image
