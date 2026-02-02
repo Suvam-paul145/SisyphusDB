@@ -25,7 +25,7 @@ Bash
 
 ```
 go mod download
-go build -o kv-server cmd/server/main.go
+go build -o kv-server ./cmd/server/
 ```
 
 ### 2. Run a 3-Node Cluster
@@ -37,7 +37,7 @@ Open 3 separate terminal tabs and run the following commands. Note the HTTP port
 Bash
 
 ```
-go run cmd/server/main.go \
+go run ./cmd/server/ \
   -id 0 \
   -port 5001 \
   -http 8000 \
@@ -50,7 +50,7 @@ go run cmd/server/main.go \
 Bash
 
 ```
-go run cmd/server/main.go \
+go run ./cmd/server/ \
   -id 1 \
   -port 5002 \
   -http 8001 \
@@ -63,7 +63,7 @@ go run cmd/server/main.go \
 Bash
 
 ```
-go run cmd/server/main.go \
+go run ./cmd/server/ \
   -id 2 \
   -port 5003 \
   -http 8002 \
