@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -37,7 +38,13 @@ func httpLogger(handler http.HandlerFunc) http.HandlerFunc {
 
 		// Log in the required format
 		statusText := http.StatusText(ww.statusCode)
-		fmt.Printf("[HTTP] %s %s %d %s %dms\n", r.Method, fullPath, ww.statusCode, statusText, durationMs)
+		log.Printf("[HTTP] %s %s %d %s %dms",
+			r.Method,
+			fullPath,
+			ww.statusCode,
+			statusText,
+			durationMs,
+		)
 	}
 }
 
