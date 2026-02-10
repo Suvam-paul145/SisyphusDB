@@ -18,6 +18,7 @@ const (
 	Leader
 )
 
+// LogEntry represents a single entry in the Raft log
 type LogEntry struct {
 	Index   int
 	Term    int
@@ -31,11 +32,13 @@ type Raft struct {
 	leaderId  int
 	applyCh   chan LogEntry
 	triggerCh chan struct{}
+	commitCh  chan struct{} 
 
 	//persistent states
 	currentTerm int
 	votedFor    int
 	log         []LogEntry
+	wal         *WAL 
 
 	//volatile state on all servers
 	commitIndex int // index of highest log entry known to be committed
@@ -79,8 +82,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 	rf.log = append(rf.log, LogEntry{index, term, cmdBytes})
 
-	fmt.Printf("[Start] Leader %d received command at Index %d, Term %d\n", rf.me, index, term)
-
 	//trigger replication
 	select {
 	case rf.triggerCh <- struct{}{}:
@@ -91,9 +92,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 // goroutine that pushes data into the KV Store
 func (rf *Raft) applier() {
-	for {
-		time.Sleep(10 * time.Millisecond)
-
+	for range rf.commitCh {
 		rf.mu.Lock()
 		if rf.commitIndex <= rf.lastApplied {
 			rf.mu.Unlock()
@@ -101,7 +100,7 @@ func (rf *Raft) applier() {
 		}
 
 		// Snapshot all ready entries into a local slice
-		var entriesToApply []LogEntry
+		entriesToApply := make([]LogEntry, 0, rf.commitIndex-rf.lastApplied)
 		for rf.lastApplied < rf.commitIndex {
 			rf.lastApplied++
 			entriesToApply = append(entriesToApply, rf.log[rf.lastApplied])
@@ -109,13 +108,7 @@ func (rf *Raft) applier() {
 		rf.mu.Unlock()
 
 		for _, entry := range entriesToApply {
-			msg := LogEntry{
-				Command: entry.Command,
-				Index:   entry.Index,
-				Term:    entry.Term,
-			}
-			// send to kv store
-			rf.applyCh <- msg
+			rf.applyCh <- entry
 		}
 	}
 }
@@ -126,6 +119,7 @@ func Make(peers []pb.RaftServiceClient, me int, applyCh chan LogEntry) *Raft {
 	rf.me = me
 	rf.applyCh = applyCh
 	rf.triggerCh = make(chan struct{}, 1)
+	rf.commitCh = make(chan struct{}, 1)
 	rf.state = Follower
 	rf.currentTerm = 0
 	rf.votedFor = -1
@@ -140,6 +134,15 @@ func Make(peers []pb.RaftServiceClient, me int, applyCh chan LogEntry) *Raft {
 	rf.nextIndex = make(map[int]int)
 	rf.matchIndex = make(map[int]int)
 
+	// Initialize WAL
+	wal, err := createOrOpenRaftWAL(me)
+	if err != nil {
+		fmt.Printf("Error creating WAL for node %d: %v\n", me, err)
+		panic(err)
+	}
+	rf.wal = wal
+
+	// Recover state from WAL
 	rf.readPersist()
 	rf.lastResetTime = time.Now()
 
@@ -149,19 +152,21 @@ func Make(peers []pb.RaftServiceClient, me int, applyCh chan LogEntry) *Raft {
 	return rf
 }
 func (rf *Raft) replicator() {
-	for {
-		select {
-		case <-rf.triggerCh:
-			// Instead of sending immediately, we sleep for 10ms.
-			// This allows multiple 'Start()' calls to pile up entries in rf.log.
-			time.Sleep(30 * time.Millisecond)
-
-			rf.mu.Lock()
-			rf.persist()
-			rf.mu.Unlock()
-			// Now we send ONE RPC containing ALL the new entries
-			rf.sendHeartBeats()
+	for range rf.triggerCh {
+		// Drain-loop based accumulation of log entries
+		drain:
+		for {
+			select {
+			case <-rf.triggerCh:
+			default: 
+				break drain
+			}
 		}
+
+		rf.mu.Lock()
+		rf.persist()
+		rf.mu.Unlock()
+		rf.sendHeartBeats()
 	}
 }
 
@@ -193,7 +198,7 @@ func (rf *Raft) startElection() {
 	rf.currentTerm++
 	rf.votedFor = rf.me
 	rf.lastResetTime = time.Now()
-	rf.persist() // Save the new term/vote immediately!
+	rf.persistState() 
 
 	term := rf.currentTerm
 	lastLogIndex := len(rf.log) - 1
@@ -229,7 +234,7 @@ func (rf *Raft) startElection() {
 					rf.state = Follower
 					rf.votedFor = -1
 					rf.leaderId = -1
-					rf.persist()
+					rf.persistState()
 					return
 				}
 

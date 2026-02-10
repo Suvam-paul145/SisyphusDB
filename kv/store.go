@@ -17,6 +17,13 @@ import (
 	"time"
 )
 
+// Pool for reusing OpResult channels
+var opResultPool = sync.Pool{
+	New: func() interface{} {
+		return make(chan OpResult, 1)
+	},
+}
+
 type MemTable struct {
 	Index map[string]int
 	Arena *arena.Arena
@@ -99,11 +106,8 @@ func NewKVStore(peers []pb.RaftServiceClient, me int) (*Store, error) {
 // Loop that pulls data from Raft and writes to Store
 func (s *Store) readAppliedLogs() {
 	for msg := range s.applyCh {
-		// Deserialize
-		fmt.Printf("[Apply] Store applying Index %d. Waiting clients: %d\n", msg.Index, len(s.notifyChans))
 		var cmd raftCmd
 		if err := json.Unmarshal(msg.Command, &cmd); err != nil {
-			fmt.Printf("Error unmarshalling log: %v\n", err)
 			continue
 		}
 
@@ -117,7 +121,6 @@ func (s *Store) readAppliedLogs() {
 		s.mu.Lock()
 		// We check if any client is waiting for this specific log index
 		if ch, ok := s.notifyChans[msg.Index]; ok {
-			fmt.Printf("[Notify] Notifying client for Index %d\n", msg.Index)
 			ch <- OpResult{
 				Value: cmd.Value,
 				Err:   err,
@@ -176,25 +179,37 @@ func (s *Store) Put(key string, val string, isDelete bool) error {
 	if !isLeader {
 		return fmt.Errorf("not leader")
 	}
-	//create notify channel
+
+	// Get channel from pool
+	ch := opResultPool.Get().(chan OpResult)
+
 	s.mu.Lock()
 	if s.notifyChans == nil {
 		s.notifyChans = make(map[int]chan OpResult)
 	}
-	ch := make(chan OpResult, 1)
 	s.notifyChans[index] = ch
 	s.mu.Unlock()
 
 	// wait for consensus to replicate
+	var result error
 	select {
 	case res := <-ch:
-		return res.Err
+		result = res.Err
 	case <-time.After(2 * time.Second):
 		s.mu.Lock()
 		delete(s.notifyChans, index)
 		s.mu.Unlock()
-		return fmt.Errorf("timeout waiting for consensus")
+		result = fmt.Errorf("timeout waiting for consensus")
 	}
+
+	// Return channel to pool
+	select {
+	case <-ch: // drain if not empty
+	default:
+	}
+	opResultPool.Put(ch)
+
+	return result
 }
 
 func (s *Store) Get(key string) (string, bool) {
