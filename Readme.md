@@ -33,8 +33,8 @@
 
 ### CLI Client
 ```bash
-# Build the CLI
-go build -o sicli ./cmd/cli
+# Build CLI
+make build-cli
 
 # Basic operations
 sicli put hello world
@@ -45,6 +45,7 @@ sicli delete hello
 sicli config set --server-url http://localhost:8081
 sicli metrics
 ```
+For detailed installation instructions, see [cmd/cli/INSTALLATION.md](cmd/cli/INSTALLATION.md).
 
 ### Local (Docker Compose)
 ```bash
