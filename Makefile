@@ -47,4 +47,4 @@ help:
 	@echo "Targets:"
 	@echo "  make build-cli       Build CLI"
 	@echo "  make build-server    Build server"
-	@echo "  make install         Install sicli into PATH"
+	@echo "  make install-cli         Install sicli into PATH"
