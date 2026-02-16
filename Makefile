@@ -26,7 +26,7 @@ build-all: build-server build-cli
 # Install CLI to system PATH
 install-cli: build-cli
 	@echo "Installing sicli to system PATH..."
-ifeq ($(OS),Windows_NT)
+ifeq ($(OS),windows)
 	@echo "Windows detected. Unavailable."
 else
 	@if [ "$$(uname)" = "Darwin" ]; then \
