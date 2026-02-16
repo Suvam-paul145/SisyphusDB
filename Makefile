@@ -1,6 +1,6 @@
 # KV-Store Makefile
 
-.PHONY: build-server build-cli build-all  help 
+.PHONY: build-server build-cli build-all install-cli all help
 
 
 APP_NAME      = sicli
