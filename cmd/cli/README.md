@@ -4,6 +4,25 @@ A command-line interface for interacting with the KV-Store cluster.
 
 ## Installation
 
+### Quick Install
+
+```bash
+# Build CLI
+make build-cli
+
+# Install to your PATH
+make install-cli
+
+# Verify installation
+sicli --help
+```
+
+Now you can use `sicli` from anywhere without the `./` prefix!
+
+For detailed installation instructions, see [INSTALLATION.md](INSTALLATION.md).
+
+### Manual Build
+
 Build the CLI from the project root:
 
 ```bash
