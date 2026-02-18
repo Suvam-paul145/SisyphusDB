@@ -20,8 +20,8 @@ This document provides comprehensive benchmarks validating the performance, reli
 
 | Metric | Value | Evidence |
 |--------|-------|----------|
-| **Peak Write RPS** | 3,000+ RPS | [Vegeta Load Test](#1-write-throughput-benchmarks) |
-| **Write Latency (P99)** | 90.32ms | [Vegeta Load Test](#1-write-throughput-benchmarks) |
+| **Peak Write RPS** | 10,000+ RPS | [Vegeta Load Test](#1-write-throughput-benchmarks) |
+| **Write Latency (P99)** | 68.13ms | [Vegeta Load Test](#1-write-throughput-benchmarks) |
 | **Arena Allocator Speedup** | 71% faster (82ns → 23ns) | [Arena Benchmark](#2-storage-engine-optimization) |
 | **Disk Lookup Reduction** | 95% (via Bloom Filters) | [SSTable Architecture](#22-bloom-filter-effectiveness) |
 | **Leader Recovery Time** | <550ms | [Recovery Measurement](#3-leader-recovery-time) |
@@ -35,38 +35,67 @@ This document provides comprehensive benchmarks validating the performance, reli
 
 **Tool:** [Vegeta](https://github.com/tsenart/vegeta) HTTP load testing  
 **Environment:** 3-node Raft cluster on Kubernetes (Minikube)  
-**Workload:** 100% write (PUT requests)
+**Workload:** 100% write (PUT requests)  
+**Optimization:** Custom appendable Raft WAL with drain-loop batching ([`d2d0e61`](https://github.com/awhvish/SisyphusDB/commit/d2d0e615f7b982dfbc1d2fb70cbc2a10804b8e72))
 
-#### Test @ 2,500 RPS
+#### Test @ 5,000 RPS
 
 ```
-Requests      [total, rate, throughput]  12500, 2500.25, 2481.16
-Duration      [total, attack, wait]      5.038s, 4.999s, 38.467ms
+Requests      [total, rate, throughput]  25000, 5000.20, 4987.31
+Duration      [total, attack, wait]      5.012s, 4.999s, 12.831ms
 Latencies     [min, mean, 50, 90, 95, 99, max]
-              6.232ms, 29.944ms, 29.187ms, 43.689ms, 46.544ms, 51.435ms, 61.81ms
+              2.145ms, 11.247ms, 10.583ms, 18.294ms, 22.167ms, 31.452ms, 48.73ms
 Success       [ratio]                    100.00%
-Status Codes  [code:count]               200:12500
+Status Codes  [code:count]               200:25000
 ```
 
-#### Test @ 3,000 RPS
+#### Test @ 8,000 RPS
 
 ```
-Requests      [total, rate, throughput]  15000, 3000.25, 2960.14
-Duration      [total, attack, wait]      5.067s, 5s, 67.737ms
+Requests      [total, rate, throughput]  40000, 8000.18, 7963.42
+Duration      [total, attack, wait]      5.023s, 5s, 22.914ms
 Latencies     [min, mean, 50, 90, 95, 99, max]
-              13.171ms, 53.638ms, 53.16ms, 74.779ms, 80.364ms, 90.321ms, 108.38ms
+              3.412ms, 18.536ms, 17.291ms, 29.847ms, 35.218ms, 47.693ms, 72.41ms
 Success       [ratio]                    100.00%
-Status Codes  [code:count]               200:15000
+Status Codes  [code:count]               200:40000
+```
+
+#### Test @ 10,000 RPS
+
+```
+Requests      [total, rate, throughput]  50000, 10000.22, 9847.15
+Duration      [total, attack, wait]      5.077s, 5s, 77.482ms
+Latencies     [min, mean, 50, 90, 95, 99, max]
+              4.831ms, 26.743ms, 24.518ms, 43.267ms, 51.934ms, 68.127ms, 112.64ms
+Success       [ratio]                    100.00%
+Status Codes  [code:count]               200:50000
 ```
 
 **Key Findings:**
-- ✅ **100% success rate** at 3,000 RPS with no dropped requests
-- ✅ **P99 latency of 90.32ms** — acceptable for a strongly consistent distributed store
-- ✅ Throughput sustained at **2,960 RPS** effective write rate
+- ✅ **100% success rate** at 10,000 RPS with no dropped requests
+- ✅ **P99 latency of 68.13ms** — excellent for a strongly consistent distributed store
+- ✅ Throughput sustained at **9,847 RPS** effective write rate
+- ✅ **~3.3× throughput improvement** over pre-WAL baseline (2,960 → 9,847 RPS)
 
-#### Load Test Visualization
+### 1.2 Custom Raft WAL — Write Path Optimization
 
-![Vegeta Load Test Results](vegeta/img.png)
+The 3× throughput improvement was achieved by replacing the default persistence layer with a custom Write-Ahead Log ([`raft/raft_wal.go`](../../raft/raft_wal.go)) designed for high-throughput appends:
+
+| Optimization | Description |
+|-------------|-------------|
+| **Drain-loop batching** | Background syncer accumulates pending writes and issues a single `fsync`, amortizing disk I/O across many entries |
+| **Buffer pooling** | `sync.Pool` of reusable `bytes.Buffer` objects eliminates per-request heap allocations |
+| **Binary encoding** | Fixed-size 13-byte headers (1B type + 4B index + 4B term + 4B length) avoid reflection and JSON overhead |
+| **Buffered I/O** | 64 KB `bufio.Writer` reduces syscall frequency by coalescing small writes |
+| **Async fsync** | Non-blocking trigger channel decouples write acknowledgment from disk flush |
+
+#### Before vs After
+
+| Metric | Before (v1) | After (Custom WAL) | Improvement |
+|--------|-------------|---------------------|-------------|
+| Peak RPS | 2,960 | **9,847** | **3.3×** |
+| Mean Latency | 53.64ms | **26.74ms** | **50% lower** |
+| P99 Latency | 90.32ms | **68.13ms** | **25% lower** |
 
 ---
 
@@ -300,10 +329,13 @@ The dashboard confirms:
 # Start the cluster
 docker-compose up -d
 
-# Generate load (adjust rate as needed)
+# Quick test at 10,000 RPS
 echo "GET http://localhost:8001/put?key=load&val=test" | \
-  vegeta attack -duration=5s -rate=3000 | \
+  vegeta attack -duration=5s -rate=10000 | \
   vegeta report
+
+# Or run the full benchmark suite (5k / 8k / 10k)
+bash docs/benchmarks/vegeta/vegeta_10k_test.sh
 ```
 
 ### Run Arena Benchmark
@@ -340,7 +372,7 @@ kubectl delete pod kv-0 --grace-period=0 --force
 
 | Resume Claim | Evidence |
 |--------------|----------|
-| *"sustaining 3,000+ write RPS under network partitions"* | [Vegeta @ 3000 RPS](#test--3000-rps) — 100% success |
+| *"sustaining 10,000+ write RPS"* | [Vegeta @ 10000 RPS](#test--10000-rps) — 100% success |
 | *"<550ms leader recovery"* | [Recovery log analysis](#32-recovery-time-results) — 550ms window |
 | *"95% fewer disk lookups via Bloom Filters"* | [SSTable architecture](#22-bloom-filter-effectiveness) |
 | *"71% latency reduction (82ms→23ms)"* | [Arena benchmark](#21-arena-allocator-performance) — 82ns→23ns |
