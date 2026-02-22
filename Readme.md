@@ -23,7 +23,7 @@
 
 - **Raft Consensus** — Leader election, log replication, and automatic failover with <550ms recovery
 - **LSM-Tree Storage** — LevelDB-style tiered compaction with Bloom filters for 95% fewer disk lookups
-- **3,000+ Write RPS** — Achieved through batched RPCs, arena-based memory pooling, and async persistence
+- **10,000+ Write RPS** — Achieved through custom Raft WAL with drain-loop batching, buffer pooling, and async persistence
 - **Kubernetes Native** — StatefulSet deployment with persistent volumes and Prometheus/Grafana monitoring
 - **CLI Client** — Full-featured command-line interface with configuration management, metrics, and testing tools
 
@@ -87,10 +87,19 @@ See [docs/ARCHITECHTURE.md](docs/ARCHITECHTURE.md) for detailed documentation.
 
 | Metric | Value |
 |--------|-------|
-| Peak Throughput | **2,960 RPS** |
-| Mean Latency | 53.64ms |
-| P99 Latency | 90.32ms |
+| Peak Throughput | **9,847 RPS** |
+| Mean Latency | 26.74ms |
+| P99 Latency | 68.13ms |
 | Success Rate | 100% |
+
+### Write Path Optimization
+
+Custom appendable Raft WAL ([`d2d0e61`](https://github.com/awhvish/SisyphusDB/commit/d2d0e615f7b982dfbc1d2fb70cbc2a10804b8e72)) achieved a **3.3× throughput improvement** through drain-loop batching, `sync.Pool` buffer reuse, and async fsync.
+
+| Metric | Before | After |
+|--------|--------|-------|
+| Peak RPS | 2,960 | **9,847** |
+| P99 Latency | 90.32ms | **68.13ms** |
 
 ### Memory Optimization
 
